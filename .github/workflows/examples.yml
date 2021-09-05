@@ -18,6 +18,7 @@ jobs:
           ]
         node: ['14.x']
         os: [ubuntu-latest]
+        start: ['12.x', '14.x']
     services:
       postgres:
         image: postgres:12.1
@@ -30,6 +31,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v2
 
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.node }}
+
       - name: Install deps and build (with cache)
         uses: bahmutov/npm-install@v1
 
@@ -39,6 +45,12 @@ jobs:
           path: ${{ github.workspace }}/.next/cache
           key: ${{ runner.dir }}-${{ runner.os }}-${{ runner.node }}-nextjs
       
+      - name: Use Node ${{ matrix.node }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ matrix.start }}
+
+      - run: yarn install --ignore-scripts
       - run: yarn playwright install-deps
 
       - name: if exists, run yarn lint
