@@ -2,6 +2,9 @@ name: Lint
 on: [push]
 jobs:
   lint:
+    env:
+      # Install playwright browsers in `node_modules/`
+      PLAYWRIGHT_BROWSERS_PATH: 0
     runs-on: ubuntu-latest
 
     steps:
@@ -19,5 +22,5 @@ jobs:
 
       - name: Lint
         run: yarn lint
-      
+
       - run: yarn manypkg check
