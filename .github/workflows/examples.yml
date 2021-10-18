@@ -4,6 +4,8 @@ jobs:
   e2e:
     env:
       DATABASE_URL: postgresql://postgres:@localhost:5432/trpcdb
+      # Install playwright browsers in `node_modules/`
+      PLAYWRIGHT_BROWSERS_PATH: 0
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -42,7 +44,7 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ${{ github.workspace }}/.next/cache
-          key: ${{ runner.dir }}-${{ runner.os }}-${{ runner.node }}-${{ runner.start }}-nextjs
+          key: ${{ runner.dir }}-${{ runner.os }}-${{ runner.node }}-${{ runner.start }}-${{ hashFiles('**/yarn.lock') }}-nextjs
 
       - run: node -v
       # - run: yarn install --cwd examples/${{ matrix.dir }} --ignore-scripts
