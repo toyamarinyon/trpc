@@ -1,23 +1,17 @@
 import { useRouter } from 'next/router';
 import { trpc } from 'utils/trpc';
 import NextError from 'next/error';
+import { ClientSuspense, ErrorBoundary } from 'components/ClientSuspense';
 
-export default function PostViewPage() {
+function PostView() {
   const id = useRouter().query.id as string;
-  const postQuery = trpc.useQuery(['post.byId', { id }]);
+  const postQuery = trpc.useQuery(['post.byId', { id }], {
+    suspense: true,
+    retry() {
+      return false;
+    },
+  });
 
-  if (postQuery.error) {
-    return (
-      <NextError
-        title={postQuery.error.message}
-        statusCode={postQuery.error.data?.httpStatus ?? 500}
-      />
-    );
-  }
-
-  if (postQuery.status !== 'success') {
-    return <>Loading...</>;
-  }
   const { data } = postQuery;
   return (
     <>
@@ -29,5 +23,13 @@ export default function PostViewPage() {
       <h2>Raw data:</h2>
       <pre>{JSON.stringify(data, null, 4)}</pre>
     </>
+  );
+}
+
+export default function PostViewPage() {
+  return (
+    <ClientSuspense fallback={'Loading a great post...'}>
+      <PostView />
+    </ClientSuspense>
   );
 }

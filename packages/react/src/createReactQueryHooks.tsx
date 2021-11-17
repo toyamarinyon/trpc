@@ -17,6 +17,7 @@ import React, { ReactNode, useCallback, useEffect, useMemo } from 'react';
 import {
   hashQueryKey,
   QueryClient,
+  QueryObserverSuccessResult,
   useInfiniteQuery as __useInfiniteQuery,
   UseInfiniteQueryOptions,
   UseInfiniteQueryResult,
@@ -46,6 +47,10 @@ export interface TRPCUseQueryBaseOptions extends TRPCRequestOptions {
    */
   ssr?: boolean;
 }
+type Exactly<T, U extends T> = {
+  [K in keyof U]: K extends keyof T ? T[K] : never;
+};
+type IsExactly<T, U extends T> = U extends Exactly<T, U> ? true : false;
 
 export interface UseTRPCQueryOptions<TPath, TInput, TOutput, TError>
   extends UseQueryOptions<TOutput, TError, TOutput, [TPath, TInput]>,
@@ -247,15 +252,28 @@ export function createReactQueryHooks<TRouter extends AnyRouter>() {
     return React.useContext(Context);
   }
 
-  function useQuery<TPath extends keyof TQueryValues & string>(
-    pathAndInput: [path: TPath, ...args: inferHandlerInput<TQueries[TPath]>],
-    opts?: UseTRPCQueryOptions<
+  function useQuery<
+    TPath extends keyof TQueryValues & string,
+    TOptions extends UseTRPCQueryOptions<
       TPath,
       TQueryValues[TPath]['input'],
       TQueryValues[TPath]['output'],
       TError
     >,
-  ): UseQueryResult<TQueryValues[TPath]['output'], TError> {
+  >(
+    pathAndInput: [path: TPath, ...args: inferHandlerInput<TQueries[TPath]>],
+    opts?: Pick<
+      TOptions,
+      keyof UseTRPCQueryOptions<
+        TPath,
+        TQueryValues[TPath]['input'],
+        TQueryValues[TPath]['output'],
+        TError
+      >
+    >,
+  ): TOptions extends { suspense: true; enabled?: true | never }
+    ? QueryObserverSuccessResult<TQueryValues[TPath]['output'], TError>
+    : UseQueryResult<TQueryValues[TPath]['output'], TError> {
     const cacheKey = getCacheKey(pathAndInput, CACHE_KEY_QUERY);
     const { client, isPrepass, queryClient, prefetchQuery } = useContext();
 
@@ -268,7 +286,7 @@ export function createReactQueryHooks<TRouter extends AnyRouter>() {
     ) {
       prefetchQuery(pathAndInput as any, opts as any);
     }
-    return __useQuery(
+    return (__useQuery as any)(
       cacheKey as any,
       () => (client as any).query(...getClientArgs(pathAndInput, opts)),
       opts,
@@ -344,17 +362,20 @@ export function createReactQueryHooks<TRouter extends AnyRouter>() {
     }, [queryKey, enabled]);
   }
 
-  function useInfiniteQuery<TPath extends TInfiniteQueryNames & string>(
-    pathAndInput: [
-      path: TPath,
-      input: Omit<TQueryValues[TPath]['input'], 'cursor'>,
-    ],
-    opts?: UseTRPCInfiniteQueryOptions<
+  function useInfiniteQuery<
+    TPath extends TInfiniteQueryNames & string,
+    TOptions extends UseTRPCInfiniteQueryOptions<
       TPath,
       Omit<TQueryValues[TPath]['input'], 'cursor'>,
       TQueryValues[TPath]['output'],
       TError
     >,
+  >(
+    pathAndInput: [
+      path: TPath,
+      input: Omit<TQueryValues[TPath]['input'], 'cursor'>,
+    ],
+    opts?: TOptions,
   ): UseInfiniteQueryResult<TQueryValues[TPath]['output'], TError> {
     const [path, input] = pathAndInput;
     const { client, isPrepass, prefetchInfiniteQuery, queryClient } =
