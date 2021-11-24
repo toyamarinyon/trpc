@@ -175,20 +175,23 @@ export function withTRPC<TRouter extends AnyRouter>(
         while (true) {
           // render full tree
           await ssrPrepass(createElement(AppTree, prepassProps as any));
-          if (!queryClient.isFetching()) {
+          if (!queryClient.isFetching() && queryClient.isMutating()) {
             // the render didn't cause the queryClient to fetch anything
             break;
           }
 
-          // wait until the query cache has settled it's promises
-          await new Promise<void>((resolve) => {
-            const unsub = queryClient.getQueryCache().subscribe((event) => {
-              if (event?.query.getObserversCount() === 0) {
-                resolve();
-                unsub();
-              }
-            });
-          });
+          // wait until the query + mutation cache has settled it's promises
+
+          await Promise.all([
+            new Promise<void>((resolve) => {
+              const unsub = queryClient.getQueryCache().subscribe((event) => {
+                if (event?.query.getObserversCount() === 0) {
+                  resolve();
+                  unsub();
+                }
+              });
+            }),
+          ]);
         }
         const dehydratedCache = dehydrate(queryClient, {
           shouldDehydrateQuery() {
