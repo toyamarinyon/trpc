@@ -222,14 +222,26 @@ export function createReactQueryHooks<
           setQueryData: useCallback(
             (pathAndInput, output, ...args) => {
               const cacheKey = getCacheKey(pathAndInput);
+
+              const newData =
+                typeof output === 'function'
+                  ? (output as any)(
+                      queryClient.getQueryData(
+                        cacheKey.concat([CACHE_KEY_QUERY]),
+                      ) ??
+                        queryClient.getQueryData(
+                          cacheKey.concat([CACHE_KEY_INFINITE_QUERY]),
+                        ),
+                    )
+                  : output;
               queryClient.setQueryData(
                 cacheKey.concat([CACHE_KEY_QUERY]),
-                output,
+                newData,
                 ...args,
               );
               queryClient.setQueryData(
                 cacheKey.concat([CACHE_KEY_INFINITE_QUERY]),
-                output,
+                newData,
                 ...args,
               );
             },
@@ -238,7 +250,12 @@ export function createReactQueryHooks<
           getQueryData: useCallback(
             (pathAndInput) => {
               const cacheKey = getCacheKey(pathAndInput);
-              return queryClient.getQueryData(cacheKey.concat(CACHE_KEY_QUERY));
+              return (
+                queryClient.getQueryData(cacheKey.concat(CACHE_KEY_QUERY)) ??
+                queryClient.getQueryData(
+                  cacheKey.concat(CACHE_KEY_INFINITE_QUERY),
+                )
+              );
             },
             [queryClient],
           ),
