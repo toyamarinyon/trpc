@@ -6,13 +6,13 @@ interface ProcedureOptions<TContext> {
 type Procedure<TContext> = (opts: ProcedureOptions<TContext>) => any;
 type ProcedureRecord<TContext> = Record<string, Procedure<TContext>>;
 
-interface Procedures<TContext> {
+interface ProceduresByType<TContext> {
   queries?: ProcedureRecord<TContext>;
   mutations?: ProcedureRecord<TContext>;
 }
 
 export function createRouterWithContext<TContext extends {}>() {
-  return function createRouter<TProcedures extends Procedures<TContext>>(
+  return function createRouter<TProcedures extends ProceduresByType<TContext>>(
     procedures: TProcedures,
   ): TProcedures {
     return procedures;
@@ -21,8 +21,8 @@ export function createRouterWithContext<TContext extends {}>() {
 
 export const createRouter = createRouterWithContext<unknown>();
 
-export function createProcedure<TContext>() {
-  return <TProcedure extends Procedure<TContext>>(fn: TProcedure) => {
+export function createProcedure<TInputContext>() {
+  return <TProcedure extends Procedure<TInputContext>>(fn: TProcedure) => {
     return fn;
   };
 }
