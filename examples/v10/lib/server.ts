@@ -6,7 +6,7 @@ interface ProcedureOptions<TContext> {
 type Procedure<TContext> = (opts: ProcedureOptions<TContext>) => any;
 type ProcedureRecord<TContext> = Record<string, Procedure<TContext>>;
 
-interface ProceduresByType<TContext> {
+export interface ProceduresByType<TContext> {
   queries?: ProcedureRecord<TContext>;
   mutations?: ProcedureRecord<TContext>;
 }
@@ -26,3 +26,5 @@ export function createProcedure<TInputContext>() {
     return fn;
   };
 }
+
+export function createProcedureWithZod() {}
