@@ -2,7 +2,7 @@
 id: deploy-render
 title: Deployment on Render.com
 sidebar_label: Render.com
-slug: /deploy/render-com
+slug: /deploy/render
 ---
 
 # Deploy tRPC on [Render.com](https://render.com)
@@ -21,7 +21,7 @@ slug: /deploy/render-com
 1. [Deploy your code to Render](https://dashboard.render.com/select-repo?type=iac). If you haven’t already, connect your GitHub or GitLab account to Render.
 1. Render will deploy your code as a web service, create a PostgreSQL instance, and configure the connection between them. Additionally, future pushes to your GitHub or GitLab repo will automatically deploy your Render web service.
 
-```yml
+```yaml
 services:
   - type: web
     name: trpc-nextjs-starter
