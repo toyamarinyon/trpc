@@ -1,10 +1,18 @@
-interface ProcedureOptions<TContext> {
+interface ProcedureOptions<TContext, TInput = unknown, TParsedInput = unknown> {
+  _inputRaw: unknown;
+  _inputBeforeTransform: TInput;
   ctx: TContext;
-  rawInput: unknown;
+  input: TParsedInput;
 }
 
-type Procedure<TContext> = (opts: ProcedureOptions<TContext>) => any;
-type ProcedureRecord<TContext> = Record<string, Procedure<TContext>>;
+type RichProcedure<TInputContext, TContext, TInput, TParsedInput, TOutput> = (
+  opts: ProcedureOptions<TContext>,
+) => any;
+
+type ProcedureRecord<TContext> = Record<
+  string,
+  RichProcedure<TContext, unknown, unknown, unknown, unknown>
+>;
 
 export interface ProceduresByType<TContext> {
   queries?: ProcedureRecord<TContext>;
@@ -21,10 +29,7 @@ export function createRouterWithContext<TContext extends {}>() {
 
 export const createRouter = createRouterWithContext<unknown>();
 
-export function createProcedure<TInputContext>() {
-  return <TProcedure extends Procedure<TInputContext>>(fn: TProcedure) => {
-    return fn;
-  };
-}
-
-// export function createProcedureWithZod() {}
+export type ProcedureInputParserZodEsque<TInput, TParsedInput> = {
+  _input: TInput;
+  _output: TParsedInput;
+};
