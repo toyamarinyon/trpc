@@ -1,0 +1,54 @@
+---
+id: deploy-render
+title: Deployment on render.com
+sidebar_label: Render.com
+slug: /deploy/render
+---
+
+
+# Deploy tRPC on [Render.com](https://render.com)
+
+tRPC allows you to easily build & consume fully typesafe APIs, without schemas or code generation. 
+
+
+## One-Click Deploy
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)
+](https://github.com/trpc/examples-next-prisma-starter)
+
+## Modify an Existing tRPC Project for Render
+
+
+1. Add the YAML below to a `render.yaml` file at the root of your repo.
+1. Commit and push your changes to GitHub or GitLab.
+1. [Deploy your code to Render](https://dashboard.render.com/select-repo?type=iac). If you haven’t already, connect your GitHub or GitLab account to Render.
+1. Render will deploy your code as a web service, create a PostgreSQL instance, and configure the connection between them. Additionally, future pushes to your GitHub or GitLab repo will automatically deploy your Render web service.
+
+```yaml
+services:
+  - type: web
+    name: trpc-nextjs-starter
+    env: node
+    plan: free
+    buildCommand: yarn --prod=false &&
+      yarn build
+    startCommand: yarn start
+    healthCheckPath: /api/trpc/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trpc-nextjs-starter-db
+          property: connectionString
+
+      - fromGroup: trpc-nextjs-starter
+
+databases:
+  - name: trpc-nextjs-starter-db
+    plan: free
+```
+
+You may also find it helpful to review the commit history of the [repo used for the one-click deploy above](https://github.com/trpc/examples-next-prisma-starter) to better understand these steps.
+
