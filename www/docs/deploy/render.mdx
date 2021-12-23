@@ -7,7 +7,7 @@ slug: /deploy/render
 
 # Deploy tRPC on [Render.com](https://render.com)
 
-[tRPC](https://trpc.io) is a set of a libraries that allow you to to easily build fully typesafe full-stack applications (both web and React Native), without schemas or code generation.
+[tRPC](https://trpc.io) a toolkit that allow you to easily build fully typesafe full-stack applications faster than ever before with support for both web and React Native. tRPC removes the need for GraphQL/REST and clunky API schemas by automatically inferring the backend into your frontend.
 
 ## One-Click Deploy
 
@@ -21,7 +21,7 @@ slug: /deploy/render
 1. [Deploy your code to Render](https://dashboard.render.com/select-repo?type=iac). If you haven’t already, connect your GitHub or GitLab account to Render.
 1. Render will deploy your code as a web service, create a PostgreSQL instance, and configure the connection between them. Additionally, future pushes to your GitHub or GitLab repo will automatically deploy your Render web service.
 
-```yaml
+```yaml title="/render.yaml"
 services:
   - type: web
     name: trpc-nextjs-starter
