@@ -1,4 +1,5 @@
 const middlewareMarker = Symbol('middlewareMarker');
+import * as z from 'zod';
 // utils
 export type MaybePromise<T> = T | Promise<T>;
 export type ProcedureType = 'query';
@@ -62,17 +63,18 @@ type Result = ResultSuccess | ResultError;
 
 // type AnyObject = Record<string, unknown>;
 
+type MiddlewareFunctionParams<TInputParams> = TInputParams & {
+  next: {
+    (): Promise<MiddlewareResult<TInputParams>>;
+    <T>(params: T): Promise<MiddlewareResult<T>>;
+  };
+};
 type MiddlewareFunction<
   TInputParams,
   TNextParams,
   // TResult extends Result = never,
 > = (
-  params: TInputParams & {
-    next: {
-      (): Promise<MiddlewareResult<TInputParams>>;
-      <T>(params: T): Promise<MiddlewareResult<T>>;
-    };
-  },
+  params: MiddlewareFunctionParams<TInputParams>,
 ) => Promise<MiddlewareResult<TNextParams>>;
 
 type Resolver<TParams, TResult extends Result> = (
@@ -81,11 +83,34 @@ type Resolver<TParams, TResult extends Result> = (
 
 interface Params<TContext> {
   ctx: TContext;
+  rawInput?: unknown;
+}
+
+function zod<TSchema extends z.ZodTypeAny>(schema: TSchema) {
+  return async function parser<
+    TOpts extends {
+      next: (params: {
+        __inputIn: z.input<TSchema>;
+        __inputOut: z.output<TSchema>;
+        input: z.output<TSchema>;
+      }) => any;
+    },
+  >(opts: TOpts) {
+    const { next, ...params } = opts;
+    const rawInput: z.input<TSchema> = (params as any).rawInput;
+    const result: z.output<TSchema> = await schema.parseAsync(rawInput);
+
+    return next({
+      ...params,
+      __inputIn: rawInput,
+      __inputOut: result,
+      input: result,
+    });
+  };
 }
 
 // P = PARAMS
-// S = SUCCESS
-// E = ERROR
+// R = RESULT
 function createMiddlewares<TContext>() {
   type TBaseParams = Params<TContext>;
   function middlewares<R1 extends Result, P1 = TBaseParams>(
@@ -107,6 +132,7 @@ function createMiddlewares<TContext>() {
   return middlewares;
 }
 
+/////////// app //////////
 type TestContext = {
   user?: {
     id: string;
@@ -157,6 +183,38 @@ const mws = createMiddlewares<{
       return {
         data: {
           greeting: 'hello ' + ctx.user.id,
+        },
+      };
+    },
+  );
+
+  async function main() {
+    const result = await mw({ ctx: {} });
+    if ('error' in result) {
+      result.error;
+    }
+  }
+}
+
+{
+  // with zod
+  const mw = mws(
+    zod(
+      z.object({
+        hello: z.string(),
+      }),
+    ),
+    (params) => {
+      if (Math.random() > 0.5) {
+        return {
+          error: {
+            code: 'some code',
+          },
+        };
+      }
+      return {
+        data: {
+          greeting: 'hello ' + params.ctx.user.id ?? params.input.hello,
         },
       };
     },
