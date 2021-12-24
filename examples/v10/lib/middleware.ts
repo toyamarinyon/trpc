@@ -1,6 +1,24 @@
 const middlewareMarker = Symbol('middlewareMarker');
-type MaybePromise<T> = T | Promise<T>;
-type ProcedureType = 'query';
+// utils
+export type MaybePromise<T> = T | Promise<T>;
+export type ProcedureType = 'query';
+export type ThenArg<T> = T extends PromiseLike<infer U> ? ThenArg<U> : T;
+export type inferAsyncReturnType<TFunction extends (...args: any) => any> =
+  ThenArg<ReturnType<TFunction>>;
+
+export type identity<T> = T;
+/**
+ * @internal
+ */
+export type flatten<T, Q> = identity<{
+  [k in keyof T | keyof Q]: k extends keyof T
+    ? T[k]
+    : k extends keyof Q
+    ? Q[k]
+    : never;
+}>;
+
+// ..impl
 interface MiddlewareResultBase<TParams> {
   /**
    * All middlewares should pass through their `next()`'s output.
@@ -10,22 +28,20 @@ interface MiddlewareResultBase<TParams> {
   TParams: TParams;
 }
 
-interface MiddlewareOKResult<TParams, TResultSuccess>
-  extends MiddlewareResultBase<TParams> {
+interface MiddlewareOKResult<TParams> extends MiddlewareResultBase<TParams> {
   ok: true;
-  data: TResultSuccess;
+  data: unknown;
   // this could be extended with `input`/`rawInput` later
 }
-interface MiddlewareErrorResult<TParams, TResultError>
-  extends MiddlewareResultBase<TParams> {
+interface MiddlewareErrorResult<TParams> extends MiddlewareResultBase<TParams> {
   ok: false;
-  error: TResultError;
+  error: unknown;
   // we could guarantee it's always of this type
 }
 
-type MiddlewareResult<TParams, TResultSuccess, TResultError> =
-  | MiddlewareOKResult<TParams, TResultSuccess>
-  | MiddlewareErrorResult<TParams, TResultError>;
+type MiddlewareResult<TParams> =
+  | MiddlewareOKResult<TParams>
+  | MiddlewareErrorResult<TParams>;
 
 interface ResultSuccess {
   data: unknown;
@@ -38,31 +54,18 @@ type Result = ResultSuccess | ResultError;
 
 // type AnyObject = Record<string, unknown>;
 
-type MiddlewareFunction<
-  TInputParams,
-  TNextParams,
-  TResultSuccess,
-  TResultError,
-> = (
+type MiddlewareFunction<TInputParams, TNextParams> = (
   params: TInputParams & {
     next: {
-      (): Promise<MiddlewareResult<TInputParams, TResultSuccess, TResultError>>;
-      <T>(params: T): Promise<
-        MiddlewareResult<T, TResultSuccess, TResultError>
-      >;
+      (): Promise<MiddlewareResult<TInputParams>>;
+      <T>(params: T): Promise<MiddlewareResult<T>>;
     };
   },
-) =>
-  | Promise<
-      MiddlewareResult<TNextParams, TResultSuccess, TResultError> | TResultError
-    >
-  | TResultError;
+) => Promise<MiddlewareResult<TNextParams>>;
 
-type Resolver<
-  TParams,
-  TResultSuccess extends ResultSuccess,
-  TResultError extends ResultError,
-> = (params: TParams) => MaybePromise<TResultSuccess | TResultError>;
+type Resolver<TParams, TResult extends Result> = (
+  params: TParams,
+) => MaybePromise<TResult>;
 // type TResolverTuple = [...[MiddlewareFunction<any, any>], TResolver];
 
 interface Params<TContext> {
@@ -74,24 +77,18 @@ interface Params<TContext> {
 // E = ERROR
 function createMiddlewares<TContext>() {
   type TBaseParams = Params<TContext>;
+  function middlewares<R1 extends Result, P1 = TBaseParams>(
+    resolver: Resolver<P1, R1>,
+  ): (params: TBaseParams) => MaybePromise<R1>;
   function middlewares<
-    S1 extends ResultSuccess,
-    E1 extends ResultError,
-    P1 = TBaseParams,
-  >(
-    resolver: Resolver<P1, S1, E1>,
-  ): (params: TBaseParams) => MaybePromise<S1 | E1>;
-  function middlewares<
-    S1 extends ResultSuccess,
-    S2 extends ResultSuccess,
-    E1 extends ResultError,
-    E2 extends ResultError,
+    R1 extends Result,
+    R2 extends Result,
     P1 = TBaseParams,
     P2 = P1,
   >(
-    middleware1: MiddlewareFunction<P1, P2, S1, E1>,
-    resolver: Resolver<P2, S2, E2>,
-  ): (params: P1) => MaybePromise<S2 | E2>;
+    middleware1: MiddlewareFunction<P1, P2>,
+    resolver: Resolver<P2, R2>,
+  ): (params: P1) => MaybePromise<R2>;
   function middlewares(...args: any): any {
     throw new Error('Unimplemented');
   }
@@ -120,12 +117,10 @@ const mws = createMiddlewares<{
 }
 {
   // with a reusable middleware
-  const data = mws(
+  const mw = mws(
     ({ next, ...params }) => {
       if (!params.ctx.user) {
-        return {
-          error: 'neup',
-        };
+        throw new Error('asd');
       }
       return next({
         ...params,
@@ -136,9 +131,20 @@ const mws = createMiddlewares<{
       });
     },
     ({ ctx }) => {
+      if (Math.random() > 0.5) {
+        return {
+          error: {
+            code: 'some code',
+          },
+        };
+      }
       return {
-        data: 'hello ' + ctx.user,
+        data: {
+          greeting: 'hello ' + ctx.user.id,
+        },
       };
     },
   );
+
+  const result = mw({ ctx: {} });
 }
