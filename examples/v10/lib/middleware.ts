@@ -5,7 +5,9 @@ export type ProcedureType = 'query';
 export type ThenArg<T> = T extends PromiseLike<infer U> ? ThenArg<U> : T;
 export type inferAsyncReturnType<TFunction extends (...args: any) => any> =
   ThenArg<ReturnType<TFunction>>;
-
+export type format<T> = {
+  [k in keyof T]: T[k];
+};
 export type identity<T> = T;
 /**
  * @internal
@@ -17,6 +19,12 @@ export type flatten<T, Q> = identity<{
     ? Q[k]
     : never;
 }>;
+export type SubType<Base, Condition> = Pick<
+  Base,
+  {
+    [Key in keyof Base]: Base[Key] extends Condition ? Key : never;
+  }[keyof Base]
+>;
 
 // ..impl
 interface MiddlewareResultBase<TParams> {
@@ -30,7 +38,7 @@ interface MiddlewareResultBase<TParams> {
 
 interface MiddlewareOKResult<TParams> extends MiddlewareResultBase<TParams> {
   ok: true;
-  data: unknown;
+  success: unknown;
   // this could be extended with `input`/`rawInput` later
 }
 interface MiddlewareErrorResult<TParams> extends MiddlewareResultBase<TParams> {
@@ -54,7 +62,11 @@ type Result = ResultSuccess | ResultError;
 
 // type AnyObject = Record<string, unknown>;
 
-type MiddlewareFunction<TInputParams, TNextParams> = (
+type MiddlewareFunction<
+  TInputParams,
+  TNextParams,
+  // TResult extends Result = never,
+> = (
   params: TInputParams & {
     next: {
       (): Promise<MiddlewareResult<TInputParams>>;
@@ -66,7 +78,6 @@ type MiddlewareFunction<TInputParams, TNextParams> = (
 type Resolver<TParams, TResult extends Result> = (
   params: TParams,
 ) => MaybePromise<TResult>;
-// type TResolverTuple = [...[MiddlewareFunction<any, any>], TResolver];
 
 interface Params<TContext> {
   ctx: TContext;
@@ -120,6 +131,11 @@ const mws = createMiddlewares<{
   const mw = mws(
     ({ next, ...params }) => {
       if (!params.ctx.user) {
+        // return {
+        //   data: {
+        //     mw: 'says hello',
+        //   },
+        // };
         throw new Error('asd');
       }
       return next({
@@ -146,5 +162,10 @@ const mws = createMiddlewares<{
     },
   );
 
-  const result = mw({ ctx: {} });
+  async function main() {
+    const result = await mw({ ctx: {} });
+    if ('error' in result) {
+      result.error;
+    }
+  }
 }
