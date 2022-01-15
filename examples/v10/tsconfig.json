@@ -6,7 +6,11 @@
     "target": "ES2019",
     "declaration": true,
     "esModuleInterop": true,
-    "strict": true
+    "strict": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true
   },
   "include": ["src"],
   "exclude": ["node_modules"]
