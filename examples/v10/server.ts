@@ -2,7 +2,7 @@ import {
   createProcedure,
   createRouter,
   createRouterWithContext,
-} from './lib/trpc';
+} from './lib/server';
 
 type Context = {
   user?: {

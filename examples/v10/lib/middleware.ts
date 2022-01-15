@@ -86,24 +86,16 @@ interface Params<TContext> {
   rawInput?: unknown;
 }
 
-function zod<TSchema extends z.ZodTypeAny>(schema: TSchema) {
-  return async function parser<
-    TOpts extends {
-      next: (params: {
-        __inputIn: z.input<TSchema>;
-        __inputOut: z.output<TSchema>;
-        input: z.output<TSchema>;
-      }) => any;
-    },
-  >(opts: TOpts) {
+function zod<TInput, TSchema extends z.ZodTypeAny>(
+  schema: TSchema,
+): MiddlewareFunction<TInput, TInput & { input: z.input<TSchema> }> {
+  return async function parser(opts) {
     const { next, ...params } = opts;
     const rawInput: z.input<TSchema> = (params as any).rawInput;
     const result: z.output<TSchema> = await schema.parseAsync(rawInput);
 
     return next({
-      ...params,
-      __inputIn: rawInput,
-      __inputOut: result,
+      ...opts,
       input: result,
     });
   };
@@ -116,15 +108,19 @@ function createMiddlewares<TContext>() {
   function middlewares<R1 extends Result, P1 = TBaseParams>(
     resolver: Resolver<P1, R1>,
   ): (params: TBaseParams) => MaybePromise<R1>;
+  function middlewares<R1 extends Result, P1 extends TBaseParams = TBaseParams>(
+    middleware1: MiddlewareFunction<TBaseParams, P1>,
+    resolver: Resolver<P1, R1>,
+  ): (params: TBaseParams) => MaybePromise<R1>;
   function middlewares<
     R1 extends Result,
-    R2 extends Result,
-    P1 = TBaseParams,
-    P2 = P1,
+    P1 extends TBaseParams = TBaseParams,
+    P2 extends TBaseParams = P1,
   >(
-    middleware1: MiddlewareFunction<P1, P2>,
-    resolver: Resolver<P2, R2>,
-  ): (params: P1) => MaybePromise<R2>;
+    middleware1: MiddlewareFunction<TBaseParams, P1>,
+    middleware2: MiddlewareFunction<P1, P2>,
+    resolver: Resolver<P2, R1>,
+  ): (params: TBaseParams) => MaybePromise<R1>;
   function middlewares(...args: any): any {
     throw new Error('Unimplemented');
   }
@@ -197,8 +193,50 @@ const mws = createMiddlewares<{
 }
 
 {
+  // with manual zod
+  const mw = mws(
+    ({ next, ...params }) => {
+      return next({
+        ...params,
+        input: z
+          .object({
+            hello: z.string(),
+          })
+          .parse(params.rawInput),
+      });
+    },
+    (params) => {
+      if (Math.random() > 0.5) {
+        return {
+          error: {
+            code: 'some code',
+          },
+        };
+      }
+
+      return {
+        data: {
+          greeting: 'hello ' + params.ctx.user.id ?? params.input.hello,
+        },
+      };
+    },
+  );
+
+  async function main() {
+    const result = await mw({ ctx: {} });
+    if ('error' in result) {
+      result.error;
+    }
+  }
+}
+
+{
   // with zod
   const mw = mws(
+    ({ next, ...other }) => {
+      const res = next({ ...other, test: 1 });
+      return res;
+    },
     zod(
       z.object({
         hello: z.string(),
