@@ -1,33 +1,57 @@
 const middlewareMarker = Symbol('middlewareMarker');
 import { z } from 'zod';
-// utils
+///////////// utils //////////////
 export type MaybePromise<T> = T | Promise<T>;
-export type ProcedureType = 'query';
-export type ThenArg<T> = T extends PromiseLike<infer U> ? ThenArg<U> : T;
-export type inferAsyncReturnType<TFunction extends (...args: any) => any> =
-  ThenArg<ReturnType<TFunction>>;
-export type format<T> = {
-  [k in keyof T]: T[k];
-};
-export type identity<T> = T;
-/**
- * @internal
- */
-export type flatten<T, Q> = identity<{
-  [k in keyof T | keyof Q]: k extends keyof T
-    ? T[k]
-    : k extends keyof Q
-    ? Q[k]
-    : never;
-}>;
-export type SubType<Base, Condition> = Pick<
-  Base,
-  {
-    [Key in keyof Base]: Base[Key] extends Condition ? Key : never;
-  }[keyof Base]
->;
 
-// ..impl
+/**
+ * JSON-RPC 2.0 Error codes
+ *
+ * `-32000` to `-32099` are reserved for implementation-defined server-errors.
+ * For tRPC we're copying the last digits of HTTP 4XX errors.
+ */
+export const TRPC_ERROR_CODES_BY_KEY = {
+  /**
+   * Invalid JSON was received by the server.
+   * An error occurred on the server while parsing the JSON text.
+   */
+  PARSE_ERROR: -32700,
+  /**
+   * The JSON sent is not a valid Request object.
+   */
+  BAD_REQUEST: -32600, // 400
+  /**
+   * Internal JSON-RPC error.
+   */
+  INTERNAL_SERVER_ERROR: -32603,
+  // Implementation specific errors
+  UNAUTHORIZED: -32001, // 401
+  FORBIDDEN: -32003, // 403
+  NOT_FOUND: -32004, // 404
+  METHOD_NOT_SUPPORTED: -32005, // 405
+  TIMEOUT: -32008, // 408
+  PRECONDITION_FAILED: -32012, // 412
+  PAYLOAD_TOO_LARGE: -32013, // 413
+  CLIENT_CLOSED_REQUEST: -32099, // 499
+} as const;
+
+type ErrorCode = keyof typeof TRPC_ERROR_CODES_BY_KEY;
+
+//////// response shapes //////////
+
+interface ResultSuccess {
+  data: unknown;
+}
+interface ResultErrorData {
+  code: ErrorCode;
+  cause?: Error;
+}
+interface ResultError {
+  error: ResultErrorData;
+}
+
+type Result = ResultSuccess | ResultError;
+
+///////// middleware implementation ///////////
 interface MiddlewareResultBase<TParams> {
   /**
    * All middlewares should pass through their `next()`'s output.
@@ -48,17 +72,6 @@ interface MiddlewareErrorResult<TParams>
 type MiddlewareResult<TParams> =
   | MiddlewareOKResult<TParams>
   | MiddlewareErrorResult<TParams>;
-
-interface ResultSuccess {
-  data: unknown;
-}
-interface ResultError {
-  error: unknown;
-}
-
-type Result = ResultSuccess | ResultError;
-
-// type AnyObject = Record<string, unknown>;
 
 type MiddlewareFunctionParams<TInputParams> = TInputParams & {
   next: {
@@ -85,13 +98,17 @@ interface Params<TContext> {
 
 type ExcludeMiddlewareResult<T> = T extends MiddlewareResult<any> ? never : T;
 
-// P = PARAMS
-// R = RESULT
-function createMiddlewares<TContext>() {
+interface Procedure<TBaseParams, ResolverParams, ResolverResult> {
+  __params: ResolverParams;
+  call(params: TBaseParams): MaybePromise<ResolverResult>;
+}
+
+function pipedResolver<TContext>() {
   type TBaseParams = Params<TContext>;
+
   function middlewares<TResult extends Result>(
     resolver: Resolver<TBaseParams, TResult>,
-  ): (params: TBaseParams) => MaybePromise<TResult>;
+  ): Procedure<TBaseParams, TBaseParams, TResult>;
   function middlewares<
     TResult extends Result,
     MW1Params extends TBaseParams = TBaseParams,
@@ -99,9 +116,11 @@ function createMiddlewares<TContext>() {
   >(
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     resolver: Resolver<MW1Params, TResult>,
-  ): (
-    params: TBaseParams,
-  ) => MaybePromise<ExcludeMiddlewareResult<TResult | MW1Result>>;
+  ): Procedure<
+    TBaseParams,
+    MW1Params,
+    ExcludeMiddlewareResult<TResult | MW1Result>
+  >;
   function middlewares<
     TResult extends Result,
     MW1Params extends TBaseParams = TBaseParams,
@@ -112,9 +131,11 @@ function createMiddlewares<TContext>() {
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     middleware2: MiddlewareFunction<MW1Params, MW2Params, MW2Result>,
     resolver: Resolver<MW2Params, TResult>,
-  ): (
-    params: TBaseParams,
-  ) => MaybePromise<ExcludeMiddlewareResult<TResult | MW1Result | MW2Result>>;
+  ): Procedure<
+    TBaseParams,
+    MW2Params,
+    ExcludeMiddlewareResult<TResult | MW1Result | MW2Result>
+  >;
   function middlewares(...args: any): any {
     throw new Error('Unimplemented');
   }
@@ -123,29 +144,35 @@ function createMiddlewares<TContext>() {
 }
 ///////////// reusable middlewares /////////
 
-function zod<TInput, TSchema extends z.ZodTypeAny>(
+/***
+ * Utility for creating a zod middleware
+ */
+function zod<TInputParams, TSchema extends z.ZodTypeAny>(
   schema: TSchema,
 ): MiddlewareFunction<
-  TInput,
-  TInput & { input: z.input<TSchema> },
-  { error: z.ZodError<z.input<TSchema>> }
+  TInputParams,
+  TInputParams & { input: z.output<TSchema> },
+  { error: { code: 'BAD_REQUEST'; cause: z.ZodError<z.input<TSchema>> } }
 > {
   type zInput = z.input<TSchema>;
   type zOutput = z.output<TSchema>;
   return async function parser(opts) {
     const { next, ...params } = opts;
     const rawInput: zInput = (params as any).rawInput;
-    const r2: z.SafeParseReturnType<zInput, zOutput> =
+    const result: z.SafeParseReturnType<zInput, zOutput> =
       await schema.safeParseAsync(rawInput);
-    if (r2.success) {
+    if (result.success) {
       return next({
         ...opts,
-        input: r2,
+        input: result,
       });
     }
-    const error = (r2 as z.SafeParseError<zInput>).error;
+    const cause = (result as z.SafeParseError<zInput>).error;
     return {
-      error,
+      error: {
+        code: 'BAD_REQUEST',
+        cause,
+      },
     };
   };
 }
@@ -153,45 +180,60 @@ function zod<TInput, TSchema extends z.ZodTypeAny>(
 type ExcludeErrorLike<T> = T extends ResultError ? never : T;
 type OnlyErrorLike<T> = T extends ResultError ? T : never;
 
+/**
+ * Utility for creating a middleware that swaps the context around
+ */
+
 function contextSwapper<TInputContext>() {
-  return function swapContext<
-    TParams extends Params<TInputContext>,
-    TNewContext,
-  >(
-    newContext: (params: TParams) => Promise<TNewContext>,
-  ): MiddlewareFunction<
-    TParams,
-    Omit<TParams, 'ctx'> & { ctx: ExcludeErrorLike<TNewContext> },
-    OnlyErrorLike<TNewContext>
-  > {
-    return null as any;
+  return function factory<TNewContext, TError extends ResultError>(
+    newContext: (
+      params: Params<TInputContext>,
+    ) => Promise<{ ctx: TNewContext } | TError>,
+  ) {
+    return function middleware<TInputParams>(): MiddlewareFunction<
+      TInputParams,
+      Omit<TInputParams, 'ctx'> & { ctx: TNewContext },
+      TError
+    > {
+      throw new Error('Unimpl');
+    };
   };
 }
 
-/////////// app //////////
+////////////////////// app ////////////////////////////
+
+// boilerplate for each app, in like a utils
+const pipe = pipedResolver<TestContext>();
+const swapContext = contextSwapper<TestContext>();
+
+// context
 type TestContext = {
   user?: {
     id: string;
   };
 };
 
-const swapContext = contextSwapper<TestContext>();
+////////// app middlewares ////////
 const isAuthed = swapContext(async (params) => {
-  if (!params.ctx.user) {
+  if (Math.random() < 0.3) {
     return {
-      error: 'UNAUTHORIZED' as const,
+      error: {
+        code: 'UNAUTHORIZED',
+      },
     };
   }
   return {
-    ...params.ctx,
-    user: params.ctx.user,
+    ctx: {
+      ...params.ctx,
+      user: params.ctx.user,
+    },
   };
 });
 
-// only resolver
-const mws = createMiddlewares<TestContext>();
+/////////// app resolvers //////////
 {
-  const data = mws(() => {
+  // creating a resolver that only has response data
+  const data = pipe(() => {
     return {
       data: 'ok',
     };
@@ -199,9 +241,11 @@ const mws = createMiddlewares<TestContext>();
 }
 
 {
-  // with zod
-  const resolve = mws(
-    isAuthed,
+  // creating a resolver with a set of reusable middlewares
+  const procedure = pipe(
+    // swaps context to make sure the user is authenticated
+    isAuthed(),
+    // adds zod input validation
     zod(
       z.object({
         hello: z.string(),
@@ -211,7 +255,7 @@ const mws = createMiddlewares<TestContext>();
       if (Math.random() > 0.5) {
         return {
           error: {
-            code: 'some code',
+            code: 'INTERNAL_SERVER_ERROR' as const,
           },
         };
       }
@@ -224,9 +268,6 @@ const mws = createMiddlewares<TestContext>();
   );
 
   async function main() {
-    const result = await resolve({ ctx: {} });
-    if ('error' in result) {
-      result.error;
-    }
+    // if you hover result we can see that we can infer both the result and every possible error
   }
 }
