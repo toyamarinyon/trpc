@@ -85,7 +85,7 @@ type MiddlewareFunction<
   TResult extends Result = never,
 > = (
   params: MiddlewareFunctionParams<TInputParams>,
-) => Promise<MiddlewareResult<TNextParams> | TResult>;
+) => Promise<MiddlewareResult<TNextParams> | TResult> | TResult;
 
 type Resolver<TParams, TResult extends Result> = (
   params: TParams,
@@ -98,17 +98,34 @@ interface Params<TContext> {
 
 type ExcludeMiddlewareResult<T> = T extends MiddlewareResult<any> ? never : T;
 
-interface Procedure<TBaseParams, ResolverParams, ResolverResult> {
-  __params: ResolverParams;
-  call(params: TBaseParams): MaybePromise<ResolverResult>;
-}
+type ProcedureCall<TBaseParams, ResolverResult> = (
+  params: TBaseParams,
+) => MaybePromise<ResolverResult>;
+
+type ProcedureMeta<ResolverParams> = {
+  /**
+   * @internal
+   */
+  _params: ResolverParams;
+};
+
+type ProcedureCallWithMeta<TBaseParams, ResolverParams, ResolverResult> =
+  ProcedureCall<TBaseParams, ResolverResult> & ProcedureMeta<ResolverParams>;
+// interface Procedure<TBaseParams, ResolverParams, ResolverResult> {
+//   /**
+//    * @internal
+//    * @deprecated
+//    */
+//   _params: ResolverParams;
+//   call(params: TBaseParams): MaybePromise<ResolverResult>;
+// }
 
 function pipedResolver<TContext>() {
   type TBaseParams = Params<TContext>;
 
   function middlewares<TResult extends Result>(
     resolver: Resolver<TBaseParams, TResult>,
-  ): Procedure<TBaseParams, TBaseParams, TResult>;
+  ): ProcedureCallWithMeta<TBaseParams, TBaseParams, TResult>;
   function middlewares<
     TResult extends Result,
     MW1Params extends TBaseParams = TBaseParams,
@@ -116,7 +133,7 @@ function pipedResolver<TContext>() {
   >(
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     resolver: Resolver<MW1Params, TResult>,
-  ): Procedure<
+  ): ProcedureCallWithMeta<
     TBaseParams,
     MW1Params,
     ExcludeMiddlewareResult<TResult | MW1Result>
@@ -131,7 +148,7 @@ function pipedResolver<TContext>() {
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     middleware2: MiddlewareFunction<MW1Params, MW2Params, MW2Result>,
     resolver: Resolver<MW2Params, TResult>,
-  ): Procedure<
+  ): ProcedureCallWithMeta<
     TBaseParams,
     MW2Params,
     ExcludeMiddlewareResult<TResult | MW1Result | MW2Result>
@@ -143,7 +160,23 @@ function pipedResolver<TContext>() {
   return middlewares;
 }
 ///////////// reusable middlewares /////////
+interface InputSchema<TInput, TOutput> {
+  /**
+   * Value before potential data transform like zod's `transform()`
+   * @internal
+   */
+  _input_in: TInput;
+  /**
+   * Value after potential data transform
+   * @internal
+   */
+  _input_out: TOutput;
 
+  /**
+   * Transformed and run-time validate input value
+   */
+  input: TOutput;
+}
 /***
  * Utility for creating a zod middleware
  */
@@ -151,22 +184,25 @@ function zod<TInputParams, TSchema extends z.ZodTypeAny>(
   schema: TSchema,
 ): MiddlewareFunction<
   TInputParams,
-  TInputParams & { input: z.output<TSchema> },
+  TInputParams & InputSchema<z.output<TSchema>, z.input<TSchema>>,
   { error: { code: 'BAD_REQUEST'; cause: z.ZodError<z.input<TSchema>> } }
 > {
   type zInput = z.input<TSchema>;
   type zOutput = z.output<TSchema>;
-  return async function parser(opts) {
-    const { next, ...params } = opts;
+  return async function parser(params) {
     const rawInput: zInput = (params as any).rawInput;
     const result: z.SafeParseReturnType<zInput, zOutput> =
       await schema.safeParseAsync(rawInput);
+
     if (result.success) {
-      return next({
-        ...opts,
+      return params.next({
+        ...params,
         input: result,
+        _input_in: null as any,
+        _input_out: null as any,
       });
     }
+
     const cause = (result as z.SafeParseError<zInput>).error;
     return {
       error: {
@@ -183,19 +219,28 @@ type OnlyErrorLike<T> = T extends ResultError ? T : never;
 /**
  * Utility for creating a middleware that swaps the context around
  */
-
 function contextSwapper<TInputContext>() {
-  return function factory<TNewContext, TError extends ResultError>(
+  return function factory<TNewContext, TErrorData extends ResultErrorData>(
     newContext: (
       params: Params<TInputContext>,
-    ) => Promise<{ ctx: TNewContext } | TError>,
+    ) => MaybePromise<{ ctx: TNewContext } | { error: TErrorData }>,
   ) {
-    return function middleware<TInputParams>(): MiddlewareFunction<
+    return function middleware<TInputParams extends {}>(): MiddlewareFunction<
       TInputParams,
-      Omit<TInputParams, 'ctx'> & { ctx: TNewContext },
-      TError
+      Omit<TInputParams, 'ctx'> & { ctx: NonNullable<TNewContext> },
+      { error: TErrorData }
     > {
-      throw new Error('Unimpl');
+      return async (params) => {
+        const result = await newContext(params as any);
+
+        if ('ctx' in result) {
+          return params.next({
+            ...params,
+            ctx: result.ctx!,
+          });
+        }
+        return result;
+      };
     };
   };
 }
@@ -214,8 +259,8 @@ type TestContext = {
 };
 
 ////////// app middlewares ////////
-const isAuthed = swapContext(async (params) => {
-  if (Math.random() < 0.3) {
+const isAuthed = swapContext((params) => {
+  if (!params.ctx.user) {
     return {
       error: {
         code: 'UNAUTHORIZED',
@@ -243,15 +288,33 @@ const isAuthed = swapContext(async (params) => {
 {
   // creating a resolver with a set of reusable middlewares
   const procedure = pipe(
-    // swaps context to make sure the user is authenticated
-    isAuthed(),
     // adds zod input validation
     zod(
       z.object({
         hello: z.string(),
       }),
     ),
+    // swaps context to make sure the user is authenticated
+    isAuthed(),
+    // async (params) => {
+    //   if (!params.ctx.user) {
+    //     return {
+    //       error: {
+    //         code: 'UNAUTHORIZED',
+    //       },
+    //     };
+    //   }
+    //   return params.next({
+    //     ...params,
+    //     ctx: {
+    //       ...params.ctx,
+    //       user: params.ctx.user,
+    //     },
+    //   });
+    // },
     (params) => {
+      type TContext = typeof params.ctx;
+      type TInput = typeof params.input;
       if (Math.random() > 0.5) {
         return {
           error: {
@@ -269,5 +332,11 @@ const isAuthed = swapContext(async (params) => {
 
   async function main() {
     // if you hover result we can see that we can infer both the result and every possible error
+    const result = procedure({ ctx: {} });
+    if ('error' in result && result.error) {
+      console.log(result.error);
+    } else if ('data' in result) {
+      console.log(result.data);
+    }
   }
 }
