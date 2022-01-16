@@ -1,5 +1,6 @@
 const middlewareMarker = Symbol('middlewareMarker');
 import { z } from 'zod';
+import { expectTypeOf } from 'expect-type';
 ///////////// utils //////////////
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -38,18 +39,18 @@ type ErrorCode = keyof typeof TRPC_ERROR_CODES_BY_KEY;
 
 //////// response shapes //////////
 
-interface ResultSuccess {
+interface ProcedureResultSuccess {
   data: unknown;
 }
 interface ResultErrorData {
   code: ErrorCode;
   cause?: Error;
 }
-interface ResultError {
+interface ProcedureResultError {
   error: ResultErrorData;
 }
 
-type Result = ResultSuccess | ResultError;
+type ProcedureResult = ProcedureResultSuccess | ProcedureResultError;
 
 ///////// middleware implementation ///////////
 interface MiddlewareResultBase<TParams> {
@@ -63,11 +64,11 @@ interface MiddlewareResultBase<TParams> {
 
 interface MiddlewareOKResult<TParams>
   extends MiddlewareResultBase<TParams>,
-    ResultSuccess {}
+    ProcedureResultSuccess {}
 
 interface MiddlewareErrorResult<TParams>
   extends MiddlewareResultBase<TParams>,
-    ResultError {}
+    ProcedureResultError {}
 
 type MiddlewareResult<TParams> =
   | MiddlewareOKResult<TParams>
@@ -82,12 +83,12 @@ type MiddlewareFunctionParams<TInputParams> = TInputParams & {
 type MiddlewareFunction<
   TInputParams,
   TNextParams,
-  TResult extends Result = never,
+  TResult extends ProcedureResult = never,
 > = (
   params: MiddlewareFunctionParams<TInputParams>,
 ) => Promise<MiddlewareResult<TNextParams> | TResult> | TResult;
 
-type Resolver<TParams, TResult extends Result> = (
+type Resolver<TParams, TResult extends ProcedureResult> = (
   params: TParams,
 ) => MaybePromise<TResult>;
 
@@ -102,15 +103,18 @@ type ProcedureCall<TBaseParams, ResolverResult> = (
   params: TBaseParams,
 ) => MaybePromise<ResolverResult>;
 
-type ProcedureMeta<ResolverParams> = {
+type ProcedureMeta<TParams> = {
   /**
    * @internal
    */
-  _params: ResolverParams;
+  _params: TParams;
 };
 
-type ProcedureCallWithMeta<TBaseParams, ResolverParams, ResolverResult> =
-  ProcedureCall<TBaseParams, ResolverResult> & ProcedureMeta<ResolverParams>;
+type ProcedureCallWithMeta<TBaseParams, TParams, TResult> = ProcedureCall<
+  TBaseParams,
+  TResult
+> &
+  ProcedureMeta<TParams>;
 // interface Procedure<TBaseParams, ResolverParams, ResolverResult> {
 //   /**
 //    * @internal
@@ -123,13 +127,13 @@ type ProcedureCallWithMeta<TBaseParams, ResolverParams, ResolverResult> =
 function pipedResolver<TContext>() {
   type TBaseParams = Params<TContext>;
 
-  function middlewares<TResult extends Result>(
+  function middlewares<TResult extends ProcedureResult>(
     resolver: Resolver<TBaseParams, TResult>,
   ): ProcedureCallWithMeta<TBaseParams, TBaseParams, TResult>;
   function middlewares<
-    TResult extends Result,
+    TResult extends ProcedureResult,
     MW1Params extends TBaseParams = TBaseParams,
-    MW1Result extends Result = never,
+    MW1Result extends ProcedureResult = never,
   >(
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     resolver: Resolver<MW1Params, TResult>,
@@ -139,11 +143,11 @@ function pipedResolver<TContext>() {
     ExcludeMiddlewareResult<TResult | MW1Result>
   >;
   function middlewares<
-    TResult extends Result,
+    TResult extends ProcedureResult,
     MW1Params extends TBaseParams = TBaseParams,
-    MW1Result extends Result = never,
+    MW1Result extends ProcedureResult = never,
     MW2Params extends TBaseParams = MW1Params,
-    MW2Result extends Result = never,
+    MW2Result extends ProcedureResult = never,
   >(
     middleware1: MiddlewareFunction<TBaseParams, MW1Params, MW1Result>,
     middleware2: MiddlewareFunction<MW1Params, MW2Params, MW2Result>,
@@ -159,6 +163,42 @@ function pipedResolver<TContext>() {
 
   return middlewares;
 }
+///////////// inference helpers //////////
+type ExcludeErrorLike<T> = T extends ProcedureResultError ? never : T;
+type OnlyErrorLike<T> = T extends ProcedureResultError ? T : never;
+
+interface ProcedureDefinition<TContext, TInputIn, TInputOut, TResult>
+  extends InputSchema<TInputIn, TInputOut> {
+  ctx: TContext;
+  result: TResult;
+  data: ExcludeErrorLike<TResult>;
+  errors: OnlyErrorLike<TResult>;
+}
+type inferParamsInput<TParams> = TParams extends InputSchema<
+  infer TBefore,
+  infer TAfter
+>
+  ? InputSchema<TBefore, TAfter>
+  : InputSchema<undefined, undefined>;
+
+type inferProcedureParams<TProcedure extends ProcedureCall<any, any>> =
+  TProcedure extends ProcedureCallWithMeta<any, infer TParams, any>
+    ? TParams
+    : TProcedure extends ProcedureCall<any, infer TParams>
+    ? TParams
+    : never;
+
+type inferProcedureResult<TProcedure extends ProcedureCall<any, any>> =
+  TProcedure extends ProcedureCall<any, infer TResult> ? TResult : never;
+
+type inferProcedure<TProcedure extends ProcedureCall<any, any>> =
+  ProcedureDefinition<
+    inferProcedureParams<TProcedure>['ctx'],
+    inferParamsInput<inferProcedureParams<TProcedure>>['_input_in'],
+    inferParamsInput<inferProcedureParams<TProcedure>>['_input_out'],
+    inferProcedureResult<TProcedure>
+  >;
+
 ///////////// reusable middlewares /////////
 interface InputSchema<TInput, TOutput> {
   /**
@@ -184,7 +224,7 @@ function zod<TInputParams, TSchema extends z.ZodTypeAny>(
   schema: TSchema,
 ): MiddlewareFunction<
   TInputParams,
-  TInputParams & InputSchema<z.output<TSchema>, z.input<TSchema>>,
+  TInputParams & InputSchema<z.input<TSchema>, z.output<TSchema>>,
   { error: { code: 'BAD_REQUEST'; cause: z.ZodError<z.input<TSchema>> } }
 > {
   type zInput = z.input<TSchema>;
@@ -213,22 +253,20 @@ function zod<TInputParams, TSchema extends z.ZodTypeAny>(
   };
 }
 
-type ExcludeErrorLike<T> = T extends ResultError ? never : T;
-type OnlyErrorLike<T> = T extends ResultError ? T : never;
-
 /**
  * Utility for creating a middleware that swaps the context around
+ * FIXME: this does not correctly infer the `TError` from the callback
  */
 function contextSwapper<TInputContext>() {
-  return function factory<TNewContext, TErrorData extends ResultErrorData>(
+  return function factory<TNewContext, TError extends ProcedureResultError>(
     newContext: (
       params: Params<TInputContext>,
-    ) => MaybePromise<{ ctx: TNewContext } | { error: TErrorData }>,
+    ) => MaybePromise<{ ctx: TNewContext } | TError>,
   ) {
     return function middleware<TInputParams extends {}>(): MiddlewareFunction<
       TInputParams,
       Omit<TInputParams, 'ctx'> & { ctx: NonNullable<TNewContext> },
-      { error: TErrorData }
+      TError
     > {
       return async (params) => {
         const result = await newContext(params as any);
@@ -287,11 +325,12 @@ const isAuthed = swapContext((params) => {
 
 {
   // creating a resolver with a set of reusable middlewares
-  const procedure = pipe(
+  const myProcedure = pipe(
     // adds zod input validation
     zod(
       z.object({
         hello: z.string(),
+        lengthOf: z.string().transform((s) => s.length),
       }),
     ),
     // swaps context to make sure the user is authenticated
@@ -315,6 +354,12 @@ const isAuthed = swapContext((params) => {
     (params) => {
       type TContext = typeof params.ctx;
       type TInput = typeof params.input;
+      expectTypeOf<TContext>().toMatchTypeOf<{ user: { id: string } }>();
+      expectTypeOf<TInput>().toMatchTypeOf<{
+        hello: string;
+        lengthOf: number;
+      }>();
+
       if (Math.random() > 0.5) {
         return {
           error: {
@@ -331,8 +376,28 @@ const isAuthed = swapContext((params) => {
   );
 
   async function main() {
+    type MyProcedure = inferProcedure<typeof myProcedure>;
+
+    expectTypeOf<MyProcedure['ctx']>().toMatchTypeOf<{
+      user: { id: string };
+    }>();
+
+    expectTypeOf<MyProcedure['data']>().toMatchTypeOf<{
+      data: {
+        greeting: string;
+      };
+    }>();
+
+    expectTypeOf<MyProcedure['_input_in']>().toMatchTypeOf<{
+      hello: string;
+      lengthOf: string;
+    }>();
+    expectTypeOf<MyProcedure['_input_out']>().toMatchTypeOf<{
+      hello: string;
+      lengthOf: number;
+    }>();
     // if you hover result we can see that we can infer both the result and every possible error
-    const result = procedure({ ctx: {} });
+    const result = myProcedure({ ctx: {} });
     if ('error' in result && result.error) {
       console.log(result.error);
     } else if ('data' in result) {
