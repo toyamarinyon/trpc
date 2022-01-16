@@ -40,7 +40,7 @@ type ErrorCode = keyof typeof TRPC_ERROR_CODES_BY_KEY;
 //////// response shapes //////////
 
 interface ProcedureResultSuccess {
-  data: unknown;
+  data?: unknown;
 }
 interface ResultErrorData {
   code: ErrorCode;
@@ -225,7 +225,7 @@ function zod<TInputParams, TSchema extends z.ZodTypeAny>(
 ): MiddlewareFunction<
   TInputParams,
   TInputParams & InputSchema<z.input<TSchema>, z.output<TSchema>>,
-  { error: { code: 'BAD_REQUEST'; cause: z.ZodError<z.input<TSchema>> } }
+  { error: { code: 'BAD_REQUEST'; zod: z.ZodFormattedError<z.input<TSchema>> } }
 > {
   type zInput = z.input<TSchema>;
   type zOutput = z.output<TSchema>;
@@ -243,11 +243,11 @@ function zod<TInputParams, TSchema extends z.ZodTypeAny>(
       });
     }
 
-    const cause = (result as z.SafeParseError<zInput>).error;
+    const zod = (result as z.SafeParseError<zInput>).error.format();
     return {
       error: {
         code: 'BAD_REQUEST',
-        cause,
+        zod,
       },
     };
   };
@@ -334,7 +334,9 @@ const isAuthed = swapContext((params) => {
       }),
     ),
     // swaps context to make sure the user is authenticated
+    // FIXME:
     isAuthed(),
+    // manual version of the `isAuthed()` above
     // async (params) => {
     //   if (!params.ctx.user) {
     //     return {
@@ -376,6 +378,17 @@ const isAuthed = swapContext((params) => {
   );
 
   async function main() {
+    // if you hover result we can see that we can infer both the result and every possible expected error
+    const result = await myProcedure({ ctx: {} });
+    if ('error' in result && result.error) {
+      console.log(result.error);
+      if ('zod' in result.error) {
+        // zod error
+        console.log(result.error.zod.hello);
+      }
+    } else {
+      console.log(result.data);
+    }
     type MyProcedure = inferProcedure<typeof myProcedure>;
 
     expectTypeOf<MyProcedure['ctx']>().toMatchTypeOf<{
@@ -396,12 +409,5 @@ const isAuthed = swapContext((params) => {
       hello: string;
       lengthOf: number;
     }>();
-    // if you hover result we can see that we can infer both the result and every possible error
-    const result = myProcedure({ ctx: {} });
-    if ('error' in result && result.error) {
-      console.log(result.error);
-    } else if ('data' in result) {
-      console.log(result.data);
-    }
   }
 }
