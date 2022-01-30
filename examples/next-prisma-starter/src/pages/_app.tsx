@@ -1,4 +1,4 @@
-import { httpBatchLink } from '@trpc/client/links/httpBatchLink';
+import { httpLink } from '@trpc/client/links/httpLink';
 import { loggerLink } from '@trpc/client/links/loggerLink';
 import { withTRPC } from '@trpc/next';
 import { DefaultLayout } from 'components/DefaultLayout';
@@ -60,7 +60,7 @@ export default withTRPC<AppRouter>({
             process.env.NODE_ENV === 'development' ||
             (opts.direction === 'down' && opts.result instanceof Error),
         }),
-        httpBatchLink({
+        httpLink({
           url: `${getBaseUrl()}/api/trpc`,
         }),
       ],
