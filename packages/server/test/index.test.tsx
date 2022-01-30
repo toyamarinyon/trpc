@@ -12,6 +12,7 @@ import { routerToServerAndClient, waitError } from './_testHelpers';
 import WebSocket from 'ws';
 import { waitFor } from '@testing-library/react';
 import { httpBatchLink } from '../../client/src/links/httpBatchLink';
+import { httpLink } from '../../client/src/links/httpLink';
 
 test('smoke test', async () => {
   const { client, close } = routerToServerAndClient(
@@ -619,5 +620,32 @@ Object {
 }
 `);
   expect(await client.query('q')).toMatchInlineSnapshot(`Object {}`);
+  close();
+});
+
+// https://github.com/trpc/trpc/issues/1462
+test('regression: httpLink query without input', async () => {
+  const { client, close } = routerToServerAndClient(
+    trpc.router().query('foo', {
+      async resolve() {
+        return 'bar';
+      },
+    }),
+    {
+      client({ httpUrl }) {
+        return {
+          links: [httpLink({ url: httpUrl })],
+        };
+      },
+      server: {
+        batching: {
+          enabled: false,
+        },
+      },
+    },
+  );
+
+  expect(await client.query('foo')).toBe('bar');
+
   close();
 });
